@@ -34,7 +34,7 @@ struct WaveHeader {
 };
 
 double MidiFreq(int n) {
-  return pow(pow(2, 1.0 / 12.0), n - 69) * 440.0;
+  return pow(2, (n - 69.0) / 12.0) * 440.0;
 }
 
 // http://www.music.mcgill.ca/~ich/classes/mumt306/StandardMIDIfileformat.html
@@ -226,6 +226,10 @@ struct MIDIEvent {
     return tempo;
   }
 
+  int program() const {
+    return data1 & 0x7F;
+  }
+
   const bool operator<(const MIDIEvent& rhs) const {
     return absolute_time < rhs.absolute_time;
   }
@@ -269,29 +273,30 @@ int main(int argc, char *argv[]) {
 
   auto it = events.begin();
 
-  auto is_relevant_event = [](const MIDIEvent& event) {
-    return (event.event_type() == NOTE_ON || event.event_type() == NOTE_OFF) &&
-        event.channel() != 10;
-  };
-
   const double pi = acos(-1);
 
   std::map<int, double> volumes;
   std::map<int, int> notes;
+  std::map<int, int> programs;
+  double skip_until = 0.0;
   for (size_t i = 0; i < raw.size(); ++i) {
     const double t = 1.0 * i / kSampleRate;
-    while (it != events.end() && !is_relevant_event(*it))
-      ++it;
-    if (it != events.end()) {
+    if (t >= skip_until && it != events.end()) {
       const double event_t = it->GetAbsoluteTimeInSeconds(header, tempo);
+      skip_until = event_t;
       if (t >= event_t) {
         // The event is triggered.
         if (it->event_type() == NOTE_ON) {
-          volumes[it->channel()] = 8192.0 * it->velocity() / 0x7F;
-          notes[it->channel()] = it->note();
+          if (it->channel() != 10) {
+            volumes[it->channel()] = 8192.0 * it->velocity() / 0x7F;
+            notes[it->channel()] = it->note();
+          }
         } else if (it->event_type() == NOTE_OFF) {
           volumes.erase(it->channel());
           notes.erase(it->channel());
+        } else if (it->event_type() == PROGRAM_CHANGE) {
+          programs[it->channel()] = it->program();
+          printf("%lf: channel %d program changed to %d\n", t, it->channel(), it->program());
         }
         ++it;
       }
