@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -270,13 +271,13 @@ int main(int argc, char *argv[]) {
 
   auto is_relevant_event = [](const MIDIEvent& event) {
     return (event.event_type() == NOTE_ON || event.event_type() == NOTE_OFF) &&
-        event.channel() == 4;
+        event.channel() != 10;
   };
 
   const double pi = acos(-1);
 
-  double volume = 0.0;
-  int note = -1;
+  std::map<int, double> volumes;
+  std::map<int, int> notes;
   for (size_t i = 0; i < raw.size(); ++i) {
     const double t = 1.0 * i / kSampleRate;
     while (it != events.end() && !is_relevant_event(*it))
@@ -284,22 +285,23 @@ int main(int argc, char *argv[]) {
     if (it != events.end()) {
       const double event_t = it->GetAbsoluteTimeInSeconds(header, tempo);
       if (t >= event_t) {
+        // The event is triggered.
         if (it->event_type() == NOTE_ON) {
-          volume = 8192.0 * it->velocity() / 0x7F;
-          note = it->note();
+          volumes[it->channel()] = 8192.0 * it->velocity() / 0x7F;
+          notes[it->channel()] = it->note();
         } else if (it->event_type() == NOTE_OFF) {
-          volume = 0.0;
-          note = -1;
+          volumes.erase(it->channel());
+          notes.erase(it->channel());
         }
         ++it;
       }
     }
-    if (note < 0) {
-      raw[i] = 0;
-    } else {
-      const double carrier = MidiFreq(note) * 2.0 * pi;
-      raw[i] = volume * sin(carrier * t);
+    double result = 0.0;
+    for (const auto& p : volumes) {
+      const double carrier = MidiFreq(notes[p.first]) * 2.0 * pi;
+      result += p.second * sin(carrier * t);
     }
+    raw[i] = result;
   }
 
   fp = fopen("test.wav", "wb");
