@@ -257,7 +257,8 @@ struct Channel {
     double result = 0.0;
     for (const auto& p : volumes) {
       const double carrier = MidiFreq(p.first) * 2.0 * pi;
-      result += p.second * sin(carrier * t);
+      const double modl = carrier;
+      result += p.second * sin(carrier * t + 5 * sin(modl * t));
     }
     return result;
   }
