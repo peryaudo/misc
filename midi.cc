@@ -142,7 +142,7 @@ struct MIDIEvent {
   }
 
   void Dump() const {
-    printf("%u: %s", absolute_time, GetEventTypeName(event_type()));
+    printf("%s", GetEventTypeName(event_type()));
     switch (event_type()) {
       case NOTE_ON:
         printf(" channel = %d note = %d velocity = %d\n", channel(), note(), velocity());
@@ -154,6 +154,13 @@ struct MIDIEvent {
         printf("\n");
         break;
     }
+  }
+
+  double GetAbsoluteTimeInSeconds(const MIDIHeader& header, uint32_t tempo) const {
+    // division = ticks/quarter-note
+    // tempo = ms/quarter-note
+    // ticks / division * tempo = ms
+    return 1.0 * absolute_time / header.division * tempo / 1000.0 / 1000.0;
   }
 
   MIDIEventType event_type() const {
@@ -223,9 +230,10 @@ int main(int argc, char *argv[]) {
                    return event.event_type() == METADATA &&
                           event.metadata_type() == SET_TEMPO;
                  })->tempo();
-  printf("tempo = %u\n", tempo);
+  printf("division = %u tempo = %u\n", header.division, tempo);
   for (const auto& event : events) {
     if (event.event_type() == NOTE_ON || event.event_type() == NOTE_OFF) {
+      printf("%lf: ", event.GetAbsoluteTimeInSeconds(header, tempo));
       event.Dump();
     }
   }
