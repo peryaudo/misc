@@ -1,9 +1,40 @@
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
 #include <arpa/inet.h>
+
+const int32_t kSampleRate = 44100;
+
+struct WaveHeader {
+  WaveHeader(int32_t raw_length) {
+    subchunk2_size = raw_length;
+    chunk_size = raw_length + 36;
+    byte_rate = sample_rate * num_channels * bits_per_sample / 8;
+    block_align = num_channels * bits_per_sample / 8;
+  }
+  char chunk_id[4] = {'R', 'I', 'F', 'F'};
+  int32_t chunk_size;
+  char format[4] = {'W', 'A', 'V', 'E'};
+
+  char subchunk1_id[4] = {'f', 'm', 't', ' '};
+  int32_t subchunk1_size = 16;
+  int16_t audio_format = 1;
+  int16_t num_channels = 1;
+  int32_t sample_rate = kSampleRate;
+  int32_t byte_rate;
+  int16_t block_align;
+  int16_t bits_per_sample = 16;
+
+  char subchunk2_id[4] = {'d', 'a', 't', 'a'};
+  int32_t subchunk2_size;
+};
+
+double MidiFreq(int n) {
+  return pow(pow(2, 1.0 / 12.0), n - 69) * 440.0;
+}
 
 // http://www.music.mcgill.ca/~ich/classes/mumt306/StandardMIDIfileformat.html
 
@@ -224,18 +255,57 @@ int main(int argc, char *argv[]) {
   fclose(fp);
 
   std::sort(events.begin(), events.end());
-  uint32_t tempo =
+  const uint32_t tempo =
     std::find_if(events.begin(), events.end(),
                  [](const MIDIEvent& event) {
                    return event.event_type() == METADATA &&
                           event.metadata_type() == SET_TEMPO;
                  })->tempo();
-  printf("division = %u tempo = %u\n", header.division, tempo);
-  for (const auto& event : events) {
-    if (event.event_type() == NOTE_ON || event.event_type() == NOTE_OFF) {
-      printf("%lf: ", event.GetAbsoluteTimeInSeconds(header, tempo));
-      event.Dump();
+  const double total_time =
+    events.rbegin()->GetAbsoluteTimeInSeconds(header, tempo);
+
+  std::vector<int16_t> raw(static_cast<size_t>(kSampleRate * total_time));
+
+  auto it = events.begin();
+
+  auto is_relevant_event = [](const MIDIEvent& event) {
+    return (event.event_type() == NOTE_ON || event.event_type() == NOTE_OFF) &&
+        event.channel() == 4;
+  };
+
+  const double pi = acos(-1);
+
+  double volume = 0.0;
+  int note = -1;
+  for (size_t i = 0; i < raw.size(); ++i) {
+    const double t = 1.0 * i / kSampleRate;
+    while (it != events.end() && !is_relevant_event(*it))
+      ++it;
+    if (it != events.end()) {
+      const double event_t = it->GetAbsoluteTimeInSeconds(header, tempo);
+      if (t >= event_t) {
+        if (it->event_type() == NOTE_ON) {
+          volume = 8192.0 * it->velocity() / 0x7F;
+          note = it->note();
+        } else if (it->event_type() == NOTE_OFF) {
+          volume = 0.0;
+          note = -1;
+        }
+        ++it;
+      }
+    }
+    if (note < 0) {
+      raw[i] = 0;
+    } else {
+      const double carrier = MidiFreq(note) * 2.0 * pi;
+      raw[i] = volume * sin(carrier * t);
     }
   }
+
+  fp = fopen("test.wav", "wb");
+  WaveHeader wav_header(sizeof(int16_t) * raw.size());
+  fwrite(&wav_header, sizeof(WaveHeader), 1, fp);
+  fwrite(&raw[0], sizeof(int16_t), raw.size(), fp);
+  fclose(fp);
   return 0;
 }
