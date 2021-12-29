@@ -235,6 +235,34 @@ struct MIDIEvent {
   }
 };
 
+struct Channel {
+  std::map<int, int> volumes;
+  int program = 0;
+
+  void NoteOn(int note, int velocity) {
+    if (velocity == 0) {
+      NoteOff(note);
+      return;
+    }
+    volumes[note] = 8192.0 * velocity / 0x7F;
+  }
+
+  void NoteOff(int note) {
+    volumes.erase(note);
+  }
+
+  double Synthesize(double t) {
+    const static double pi = acos(-1);
+
+    double result = 0.0;
+    for (const auto& p : volumes) {
+      const double carrier = MidiFreq(p.first) * 2.0 * pi;
+      result += p.second * sin(carrier * t);
+    }
+    return result;
+  }
+};
+
 int main(int argc, char *argv[]) {
   if (argc < 3) {
     printf("usage: %s input.mid output.wav\n", argv[0]);
@@ -277,11 +305,7 @@ int main(int argc, char *argv[]) {
 
   auto it = events.begin();
 
-  const double pi = acos(-1);
-
-  std::map<int, double> volumes;
-  std::map<int, int> notes;
-  std::map<int, int> programs;
+  std::map<int, Channel> channels;
   double skip_until = 0.0;
   for (size_t i = 0; i < raw.size(); ++i) {
     const double t = 1.0 * i / kSampleRate;
@@ -291,25 +315,21 @@ int main(int argc, char *argv[]) {
       if (t >= event_t) {
         // The event is triggered.
         if (it->event_type() == NOTE_ON) {
-          if (it->channel() != 10) {
-            volumes[it->channel()] = 8192.0 * it->velocity() / 0x7F;
-            notes[it->channel()] = it->note();
-          }
+          if (it->channel() != 10)
+            channels[it->channel()].NoteOn(it->note(), it->velocity());
         } else if (it->event_type() == NOTE_OFF) {
-          volumes.erase(it->channel());
-          notes.erase(it->channel());
+          if (it->channel() != 10)
+            channels[it->channel()].NoteOff(it->note());
         } else if (it->event_type() == PROGRAM_CHANGE) {
-          programs[it->channel()] = it->program();
+          channels[it->channel()].program = it->program();
           printf("%lf: channel %d program changed to %d\n", t, it->channel(), it->program());
         }
         ++it;
       }
     }
     double result = 0.0;
-    for (const auto& p : volumes) {
-      const double carrier = MidiFreq(notes[p.first]) * 2.0 * pi;
-      result += p.second * sin(carrier * t);
-    }
+    for (auto& p : channels)
+      result += p.second.Synthesize(t);
     raw[i] = result;
   }
 
