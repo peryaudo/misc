@@ -236,7 +236,11 @@ struct MIDIEvent {
 };
 
 int main(int argc, char *argv[]) {
-  FILE *fp = fopen("BGM8.MID", "rb");
+  if (argc < 3) {
+    printf("usage: %s input.mid output.wav\n", argv[0]);
+    return 1;
+  }
+  FILE *fp = fopen(argv[1], "rb");
   MIDIHeader header;
   header.Read(fp);
 
@@ -309,7 +313,7 @@ int main(int argc, char *argv[]) {
     raw[i] = result;
   }
 
-  fp = fopen("test.wav", "wb");
+  fp = fopen(argv[2], "wb");
   WaveHeader wav_header(sizeof(int16_t) * raw.size());
   fwrite(&wav_header, sizeof(WaveHeader), 1, fp);
   fwrite(&raw[0], sizeof(int16_t), raw.size(), fp);
