@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 #include <arpa/inet.h>
 
@@ -21,7 +22,7 @@ struct __attribute__((__packed__)) MIDIHeader {
     division = ntohs(division);
   }
 
-  void Dump() {
+  void Dump() const {
     printf("%.4s length = %u, format = %u, ntrks = %u, division = %u\n",
            magic, length, format, ntrks, division);
   }
@@ -36,7 +37,7 @@ struct __attribute__((__packed__)) MIDITrack {
     length = ntohl(length);
   }
 
-  void Dump() {
+  void Dump() const {
     printf("%.4s length = %u\n", magic, length);
   }
 };
@@ -49,6 +50,13 @@ enum MIDIEventType {
   PROGRAM_CHANGE = 0xC0,
   CHANNEL_PRESSURE = 0xD0,
   PITCH_BEND = 0xE0,
+  SYSEX = 0xF0,
+  METADATA = 0xFF,
+};
+
+enum MIDIMetadataType {
+  END_OF_TRACK = 0x2F,
+  SET_TEMPO = 0x51,
 };
 
 const char* GetEventTypeName(MIDIEventType event_type) {
@@ -60,16 +68,20 @@ const char* GetEventTypeName(MIDIEventType event_type) {
     case PROGRAM_CHANGE: return "PROGRAM_CHANGE";
     case CHANNEL_PRESSURE: return "CHANNEL_PRESSURE";
     case PITCH_BEND: return "PITCH_BEND";
-    default: return "METADATA";
+    case SYSEX: return "SYSEX";
+    case METADATA: return "METADATA";
+    default: return "(undefined)";
   }
 }
 
 struct MIDIEvent {
   uint32_t delta_time = 0;
+  uint32_t absolute_time = 0;
   uint32_t length = 0;
   uint8_t status = 0;
   uint8_t data1 = 0;
   uint8_t data2 = 0;
+  uint8_t* metadata = nullptr;
 
   void Read(FILE* fp, uint8_t prev_status) {
     length = 0;
@@ -90,7 +102,8 @@ struct MIDIEvent {
         ++length;
       }
       uint32_t data_length = ReadVariableLength(fp);
-      fseek(fp, data_length, SEEK_CUR);
+      metadata = new uint8_t[data_length];
+      fread(metadata, sizeof(uint8_t), data_length, fp);
       length += data_length;
       return;
     }
@@ -128,8 +141,8 @@ struct MIDIEvent {
     return 0;
   }
 
-  void Dump() {
-    printf("delta_time = %d %s", delta_time, GetEventTypeName(event_type()));
+  void Dump() const {
+    printf("%u: %s", absolute_time, GetEventTypeName(event_type()));
     switch (event_type()) {
       case NOTE_ON:
         printf(" channel = %d note = %d velocity = %d\n", channel(), note(), velocity());
@@ -144,7 +157,13 @@ struct MIDIEvent {
   }
 
   MIDIEventType event_type() const {
+    if (status == METADATA)
+      return METADATA;
     return static_cast<MIDIEventType>(status & 0xF0);
+  }
+
+  MIDIMetadataType metadata_type() const {
+    return static_cast<MIDIMetadataType>(data1);
   }
 
   int channel() const {
@@ -158,27 +177,57 @@ struct MIDIEvent {
   int velocity() const {
     return data2 & 0x7F;
   }
+
+  int tempo() const {
+    int tempo = 0;
+    for (int i = 0; i < 3; ++i) {
+      tempo <<= 8;
+      tempo += metadata[i];
+    }
+    return tempo;
+  }
+
+  const bool operator<(const MIDIEvent& rhs) const {
+    return absolute_time < rhs.absolute_time;
+  }
 };
 
 int main(int argc, char *argv[]) {
   FILE *fp = fopen("BGM8.MID", "rb");
   MIDIHeader header;
   header.Read(fp);
-  header.Dump();
+
+  std::vector<MIDIEvent> events;
   for (int i = 0; i < header.ntrks; ++i) {
     MIDITrack track;
     track.Read(fp);
-    track.Dump();
     uint32_t rem_bytes = track.length;
     uint8_t prev_status = 0;
+    uint32_t current_time = 0;
     while (rem_bytes > 0) {
       MIDIEvent event;
       event.Read(fp, prev_status);
-      event.Dump();
       prev_status = event.status;
       rem_bytes -= event.length;
+      current_time += event.delta_time;
+      event.absolute_time = current_time;
+      events.push_back(event);
     }
   }
   fclose(fp);
+
+  std::sort(events.begin(), events.end());
+  uint32_t tempo =
+    std::find_if(events.begin(), events.end(),
+                 [](const MIDIEvent& event) {
+                   return event.event_type() == METADATA &&
+                          event.metadata_type() == SET_TEMPO;
+                 })->tempo();
+  printf("tempo = %u\n", tempo);
+  for (const auto& event : events) {
+    if (event.event_type() == NOTE_ON || event.event_type() == NOTE_OFF) {
+      event.Dump();
+    }
+  }
   return 0;
 }
