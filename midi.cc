@@ -236,7 +236,7 @@ struct MIDIEvent {
 };
 
 struct Channel {
-  std::map<int, int> volumes;
+  std::map<int, double> volumes;
   int program = 0;
 
   void NoteOn(int note, int velocity) {
@@ -244,7 +244,7 @@ struct Channel {
       NoteOff(note);
       return;
     }
-    volumes[note] = 8192.0 * velocity / 0x7F;
+    volumes[note] = 1.0 * velocity / 0x7F;
   }
 
   void NoteOff(int note) {
@@ -301,13 +301,13 @@ int main(int argc, char *argv[]) {
   const double total_time =
     events.rbegin()->GetAbsoluteTimeInSeconds(header, tempo);
 
-  std::vector<int16_t> raw(static_cast<size_t>(kSampleRate * total_time));
+  std::vector<double> raw_double(static_cast<size_t>(kSampleRate * total_time));
 
   auto it = events.begin();
 
   std::map<int, Channel> channels;
   double skip_until = 0.0;
-  for (size_t i = 0; i < raw.size(); ++i) {
+  for (size_t i = 0; i < raw_double.size(); ++i) {
     const double t = 1.0 * i / kSampleRate;
     if (t >= skip_until && it != events.end()) {
       const double event_t = it->GetAbsoluteTimeInSeconds(header, tempo);
@@ -330,8 +330,13 @@ int main(int argc, char *argv[]) {
     double result = 0.0;
     for (auto& p : channels)
       result += p.second.Synthesize(t);
-    raw[i] = result;
+    raw_double[i] = result;
   }
+
+  double max_value = *std::max_element(raw_double.begin(), raw_double.end());
+  std::vector<int16_t> raw(raw_double.size());
+  for (int i = 0; i < raw.size(); ++i)
+    raw[i] = 30000.0 * raw_double[i] / max_value;
 
   fp = fopen(argv[2], "wb");
   WaveHeader wav_header(sizeof(int16_t) * raw.size());
