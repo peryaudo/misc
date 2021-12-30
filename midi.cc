@@ -235,30 +235,99 @@ struct MIDIEvent {
   }
 };
 
-struct Channel {
-  std::map<int, double> volumes;
-  int program = 0;
+struct FMParams {
+  double attack = 0.0;
+  double decay = 0.0;
+  double sustain = 1.0;
+  double release = 0.0;
 
-  void NoteOn(int note, int velocity) {
-    if (velocity == 0) {
-      NoteOff(note);
-      return;
-    }
-    volumes[note] = 1.0 * velocity / 0x7F;
+  double ratio = 1.0;
+  double index_1 = 0.0;
+  double index_2 = 0.0;
+
+  FMParams(double attack, double decay, double sustain, double release,
+      double ratio, double index_1, double index_2)
+    : attack(attack), decay(decay), sustain(sustain), release(release)
+    , ratio(ratio), index_1(index_1), index_2(index_2) {}
+};
+
+struct Note {
+  int note;
+  double velocity;
+  double pressed_time;
+
+  double released_time = 0.0;
+  double last_pressed_envelope = 0.0;
+  bool is_released = false;
+  bool is_finished = false;
+
+  Note() : note(0), velocity(0.0), pressed_time(0.0) {}
+
+  Note(int note, double velocity, double time) : note(note), velocity(velocity), pressed_time(time) {
   }
 
-  void NoteOff(int note) {
-    volumes.erase(note);
+  void Release(double time) {
+    released_time = time;
+    is_released = true;
+  }
+
+  double GenerateEnvelope(const FMParams& params, double time) {
+    if (is_released) {
+      double delta = time - released_time;
+      if (delta < params.release)
+        return last_pressed_envelope * (1.0 - delta / params.release);
+      is_finished = true;
+      return 0.0;
+    }
+    double delta = time - pressed_time;
+    if (delta < params.attack) {
+      last_pressed_envelope = delta / params.attack;
+    } else if (delta < params.attack + params.decay) {
+      last_pressed_envelope =
+        (1.0 - params.sustain) *
+        (1.0 - (delta - params.attack) / params.decay) + params.sustain;
+    } else {
+      last_pressed_envelope = params.sustain;
+    }
+    return last_pressed_envelope;
+  }
+
+  double Synthesize(const FMParams& params, double t) {
+    const static double pi = 3.1415926535897932384626;
+
+    const double carrier = MidiFreq(note) * 2.0 * pi;
+    const double modl = carrier * params.ratio;
+    const double envelope = GenerateEnvelope(params, t);
+    const double index = (params.index_2 - params.index_1) * envelope + params.index_1;
+    return velocity * envelope * sin(carrier * t + index * sin(modl * t));
+  }
+};
+
+struct Channel {
+  FMParams params{0.0, 0.0, 0.9, 1.0/6.0, 1.0, 0.0, 5.0};
+  std::map<int, Note> notes;
+  int program = 0;
+
+  void NoteOn(int note, int velocity, double t) {
+    if (velocity == 0) {
+      NoteOff(note, t);
+      return;
+    }
+    notes[note] = Note(note, 1.0 * velocity / 0x7F, t);
+  }
+
+  void NoteOff(int note, double t) {
+    notes[note].Release(t);
   }
 
   double Synthesize(double t) {
-    const static double pi = acos(-1);
-
     double result = 0.0;
-    for (const auto& p : volumes) {
-      const double carrier = MidiFreq(p.first) * 2.0 * pi;
-      const double modl = carrier;
-      result += p.second * sin(carrier * t + 5 * sin(modl * t));
+    for (auto it = notes.begin(); it != notes.end(); ) {
+      result += it->second.Synthesize(params, t);
+      if (it->second.is_finished)
+        it = notes.erase(it);
+      else
+        ++it;
     }
     return result;
   }
@@ -317,10 +386,10 @@ int main(int argc, char *argv[]) {
         // The event is triggered.
         if (it->event_type() == NOTE_ON) {
           if (it->channel() != 10)
-            channels[it->channel()].NoteOn(it->note(), it->velocity());
+            channels[it->channel()].NoteOn(it->note(), it->velocity(), t);
         } else if (it->event_type() == NOTE_OFF) {
           if (it->channel() != 10)
-            channels[it->channel()].NoteOff(it->note());
+            channels[it->channel()].NoteOff(it->note(), t);
         } else if (it->event_type() == PROGRAM_CHANGE) {
           channels[it->channel()].program = it->program();
           printf("%lf: channel %d program changed to %d\n", t, it->channel(), it->program());
