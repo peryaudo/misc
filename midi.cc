@@ -385,10 +385,10 @@ int main(int argc, char *argv[]) {
       if (t >= event_t) {
         // The event is triggered.
         if (it->event_type() == NOTE_ON) {
-          if (it->channel() != 10)
+          if (it->channel() != 9)
             channels[it->channel()].NoteOn(it->note(), it->velocity(), t);
         } else if (it->event_type() == NOTE_OFF) {
-          if (it->channel() != 10)
+          if (it->channel() != 9)
             channels[it->channel()].NoteOff(it->note(), t);
         } else if (it->event_type() == PROGRAM_CHANGE) {
           channels[it->channel()].program = it->program();
