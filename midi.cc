@@ -258,6 +258,10 @@ struct Note {
 
   Note(const Program& program, int note, double velocity, double pressed_time);
 
+
+  double Synthesize(double t);
+  double IsFinished(double t) const;
+
   void Release(double t) {
     pressed_time = -t;
   }
@@ -278,9 +282,21 @@ struct Envelope {
 
   bool reversed = false;
 
+  Envelope(double attack, double decay, double sustain, double release, bool reversed)
+      : attack(attack)
+      , decay(decay)
+      , sustain(sustain)
+      , release(release)
+      , reversed(reversed) {
+  }
+
   double Get(Note& note, OperatorState& state, double t) const {
     double result = GetInternal(note, state, t);
     return reversed ? 1.0 - result : result;
+  }
+
+  bool IsFinished(const Note& note, double t) const {
+    return note.is_released() && note.Delta(t) > release;
   }
 
  private:
@@ -320,6 +336,15 @@ struct Operator {
       , freq(freq)
       , level(level)
       , modulators(modulators) {
+  }
+
+  bool IsFinished(const Note& note, double t) const {
+    for (int i = 0; i < modulators.size(); ++i) {
+      if (!modulators[i].IsFinished(note, t)) {
+        return false;
+      }
+    }
+    return envelope.IsFinished(note, t);
   }
 
   double Synthesize(Note& note, OperatorState& state, double t) const {
@@ -378,7 +403,7 @@ double Note::Synthesize(double t) {
   return program.Synthesize(*this, t);
 }
 
-double Note::IsFinished(double t) {
+double Note::IsFinished(double t) const {
   return program.IsFinished(*this, t);
 }
 
@@ -394,11 +419,15 @@ struct Channel {
       NoteOff(note, t);
       return;
     }
-    notes[note] = Note(program, note, 1.0 * velocity / 0x7F, t);
+    notes.emplace(std::piecewise_construct,
+                  std::forward_as_tuple(note),
+                  std::forward_as_tuple(program, note, 1.0 * velocity / 0x7F, t));
   }
 
   void NoteOff(int note, double t) {
-    notes[note].Release(t);
+    auto it = notes.find(note);
+    if (it != notes.end())
+      it->second.Release(t);
   }
 
   double Synthesize(double t) {
@@ -420,7 +449,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  std::map<int, Program> programs = {};
+  std::map<int, Program> programs = {
+    {81, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, 1.0, 1.0, {}}}}},
+    };
 
   FILE *fp = fopen(argv[1], "rb");
   MIDIHeader header;
@@ -469,14 +500,19 @@ int main(int argc, char *argv[]) {
       if (t >= event_t) {
         // The event is triggered.
         if (it->event_type() == NOTE_ON) {
-          channels[it->channel()].NoteOn(it->note(), it->velocity(), t);
+          auto cit = channels.find(it->channel());
+          if (cit != channels.end())
+            cit->second.NoteOn(it->note(), it->velocity(), t);
         } else if (it->event_type() == NOTE_OFF) {
-          channels[it->channel()].NoteOff(it->note(), t);
+          auto cit = channels.find(it->channel());
+          if (cit != channels.end())
+            cit->second.NoteOff(it->note(), t);
         } else if (it->event_type() == PROGRAM_CHANGE) {
-          if (programs.count(it->program())) {
-            channels.emplace(it->channel(), programs[it->program()]);
+          auto pit = programs.find(it->program());
+          if (pit != programs.end()) {
+            channels.emplace(it->channel(), pit->second);
           } else {
-            printf("program %d not found; channel %d will be muted \n", t, it->program(), it->channel());
+            printf("program %d not found; channel %d will be muted \n", it->program(), it->channel());
           }
         }
         ++it;
