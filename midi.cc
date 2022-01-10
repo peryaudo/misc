@@ -7,7 +7,8 @@
 
 #include <arpa/inet.h>
 
-const int32_t kSampleRate = 44100;
+constexpr double pi = 3.1415926535897932384626;
+constexpr int32_t kSampleRate = 44100;
 
 struct WaveHeader {
   WaveHeader(int32_t raw_length) {
@@ -235,85 +236,165 @@ struct MIDIEvent {
   }
 };
 
-struct FMParams {
+
+struct Program;
+struct Operator;
+
+struct OperatorState {
+  double last_pressed_envelope = 0.0;
+  std::vector<OperatorState> modulators;
+
+  OperatorState(const Operator& op);
+};
+
+struct Note {
+  const Program& program;
+  int note;
+  double velocity;
+  // If negative it's a released time.
+  double pressed_time;
+
+  std::vector<OperatorState> operators;
+
+  Note(const Program& program, int note, double velocity, double pressed_time);
+
+  void Release(double t) {
+    pressed_time = -t;
+  }
+
+  bool is_released() const {
+    return pressed_time < 0.0;
+  }
+  double Delta(double t) const {
+    return pressed_time > 0.0 ? t - pressed_time : t + pressed_time;
+  }
+};
+
+struct Envelope {
   double attack = 0.0;
   double decay = 0.0;
   double sustain = 1.0;
   double release = 0.0;
 
-  double ratio = 1.0;
-  double index_1 = 0.0;
-  double index_2 = 0.0;
+  bool reversed = false;
 
-  FMParams(double attack, double decay, double sustain, double release,
-      double ratio, double index_1, double index_2)
-    : attack(attack), decay(decay), sustain(sustain), release(release)
-    , ratio(ratio), index_1(index_1), index_2(index_2) {}
-};
-
-struct Note {
-  int note;
-  double velocity;
-  double pressed_time;
-
-  double released_time = 0.0;
-  double last_pressed_envelope = 0.0;
-  bool is_released = false;
-  bool is_finished = false;
-
-  Note() : note(0), velocity(0.0), pressed_time(0.0) {}
-
-  Note(int note, double velocity, double time) : note(note), velocity(velocity), pressed_time(time) {
+  double Get(Note& note, OperatorState& state, double t) const {
+    double result = GetInternal(note, state, t);
+    return reversed ? 1.0 - result : result;
   }
 
-  void Release(double time) {
-    released_time = time;
-    is_released = true;
-  }
-
-  double GenerateEnvelope(const FMParams& params, double time) {
-    if (is_released) {
-      double delta = time - released_time;
-      if (delta < params.release)
-        return last_pressed_envelope * (1.0 - delta / params.release);
-      is_finished = true;
+ private:
+  double GetInternal(Note& note, OperatorState& state, double t) const {
+    const double delta = note.Delta(t);
+    if (note.is_released()) {
+      if (delta < release)
+        return state.last_pressed_envelope * (1.0 - delta / release);
       return 0.0;
     }
-    double delta = time - pressed_time;
-    if (delta < params.attack) {
-      last_pressed_envelope = delta / params.attack;
-    } else if (delta < params.attack + params.decay) {
-      last_pressed_envelope =
-        (1.0 - params.sustain) *
-        (1.0 - (delta - params.attack) / params.decay) + params.sustain;
+    if (delta < attack) {
+      state.last_pressed_envelope = delta / attack;
+    } else if (delta < attack + decay) {
+      state.last_pressed_envelope =
+        (1.0 - sustain) *
+        (1.0 - (delta - attack) / decay) + sustain;
     } else {
-      last_pressed_envelope = params.sustain;
+      state.last_pressed_envelope = sustain;
     }
-    return last_pressed_envelope;
-  }
-
-  double Synthesize(const FMParams& params, double t) {
-    const static double pi = 3.1415926535897932384626;
-
-    const double carrier = MidiFreq(note) * 2.0 * pi;
-    const double modl = carrier * params.ratio;
-    const double envelope = GenerateEnvelope(params, t);
-    const double index = (params.index_2 - params.index_1) * envelope + params.index_1;
-    return velocity * envelope * sin(carrier * t + index * sin(modl * t));
+    return state.last_pressed_envelope;
   }
 };
 
+struct Operator {
+  Envelope envelope;
+  // If negative it's a fixed frequency.
+  double freq = 1.0;
+  double level = 1.0;
+
+  std::vector<Operator> modulators;
+
+  Operator(const Envelope& envelope,
+           double freq,
+           double level,
+           const std::vector<Operator>& modulators)
+      : envelope(envelope)
+      , freq(freq)
+      , level(level)
+      , modulators(modulators) {
+  }
+
+  double Synthesize(Note& note, OperatorState& state, double t) const {
+    double modl = 0.0;
+    for (int i = 0; i < modulators.size(); ++i) {
+      modl += modulators[i].Synthesize(note, state.modulators[i], t);
+    }
+
+    const double carrier = (freq < 0.0 ? freq : MidiFreq(note.note)) * 2.0 * pi;
+    return level * envelope.Get(note, state, t) * sin(carrier * t + modl);
+  }
+};
+
+struct Program {
+  std::vector<Operator> operators;
+
+  Program(const std::vector<Operator>& operators) : operators(operators) {
+  }
+
+  double Synthesize(Note& note, double t) const {
+    double result = 0.0;
+    for (int i = 0; i < operators.size(); ++i) {
+      result += operators[i].Synthesize(note, note.operators[i], t);
+    }
+    result *= note.velocity;
+    return result;
+  }
+
+  bool IsFinished(const Note& note, double t) const {
+    for (int i = 0; i < operators.size(); ++i) {
+      if (!operators[i].IsFinished(note, t)) {
+        return false;
+      }
+    }
+    return true;
+  }
+};
+
+OperatorState::OperatorState(const Operator& op) {
+  for (int i = 0; i < op.modulators.size(); ++i) {
+    modulators.emplace_back(op.modulators[i]);
+  }
+}
+
+Note::Note(const Program& program, int note, double velocity, double pressed_time)
+  : program(program)
+  , note(note)
+  , velocity(velocity)
+  , pressed_time(pressed_time) {
+  for (int i = 0; i < program.operators.size(); ++i) {
+    operators.emplace_back(program.operators[i]);
+  }
+}
+
+double Note::Synthesize(double t) {
+  return program.Synthesize(*this, t);
+}
+
+double Note::IsFinished(double t) {
+  return program.IsFinished(*this, t);
+}
+
 struct Channel {
-  FMParams params{0.0, 0.0, 0.9, 1.0/6.0, 1.0, 0.0, 5.0};
+  const Program& program;
   std::map<int, Note> notes;
-  int program = 0;
+
+  explicit Channel(const Program& program) : program(program) {
+  }
 
   void NoteOn(int note, int velocity, double t) {
     if (velocity == 0) {
       NoteOff(note, t);
       return;
     }
-    notes[note] = Note(note, 1.0 * velocity / 0x7F, t);
+    notes[note] = Note(program, note, 1.0 * velocity / 0x7F, t);
   }
 
   void NoteOff(int note, double t) {
@@ -323,8 +404,8 @@ struct Channel {
   double Synthesize(double t) {
     double result = 0.0;
     for (auto it = notes.begin(); it != notes.end(); ) {
-      result += it->second.Synthesize(params, t);
-      if (it->second.is_finished)
+      result += it->second.Synthesize(t);
+      if (it->second.IsFinished(t))
         it = notes.erase(it);
       else
         ++it;
@@ -338,6 +419,9 @@ int main(int argc, char *argv[]) {
     printf("usage: %s input.mid output.wav\n", argv[0]);
     return 1;
   }
+
+  std::map<int, Program> programs = {};
+
   FILE *fp = fopen(argv[1], "rb");
   MIDIHeader header;
   header.Read(fp);
@@ -385,14 +469,15 @@ int main(int argc, char *argv[]) {
       if (t >= event_t) {
         // The event is triggered.
         if (it->event_type() == NOTE_ON) {
-          if (it->channel() != 9)
-            channels[it->channel()].NoteOn(it->note(), it->velocity(), t);
+          channels[it->channel()].NoteOn(it->note(), it->velocity(), t);
         } else if (it->event_type() == NOTE_OFF) {
-          if (it->channel() != 9)
-            channels[it->channel()].NoteOff(it->note(), t);
+          channels[it->channel()].NoteOff(it->note(), t);
         } else if (it->event_type() == PROGRAM_CHANGE) {
-          channels[it->channel()].program = it->program();
-          printf("%lf: channel %d program changed to %d\n", t, it->channel(), it->program());
+          if (programs.count(it->program())) {
+            channels.emplace(it->channel(), programs[it->program()]);
+          } else {
+            printf("program %d not found; channel %d will be muted \n", t, it->program(), it->channel());
+          }
         }
         ++it;
       }
