@@ -373,7 +373,7 @@ struct Operator {
       modl += modulators[i].Synthesize(note, state.modulators[i], t);
     }
 
-    const double carrier = (freq < 0.0 ? freq : MidiFreq(note.note)) * 2.0 * pi;
+    const double carrier = (freq < 0.0 ? -freq : freq * MidiFreq(note.note)) * 2.0 * pi;
     return level * envelope.Get(note, state, t) * GenerateSignal(func, carrier * t + modl);
   }
 };
@@ -470,7 +470,17 @@ int main(int argc, char *argv[]) {
   }
 
   std::map<int, Program> programs = {
-    {81, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SAW, 1.0, 1.0, {}}}}},
+    // Electric Piano
+    {5, Program{{Operator{Envelope{0.0, 2.0, 0.0, 0.1, false}, SINE, 1.0, 0.8, {
+                    Operator{Envelope{0.0, 2.0, 0.0, 0.1, false}, SINE, 14.0, 0.2, {}}}}}}},
+    // Slap Bass 1
+    {36, Program{{Operator{Envelope{0.0, 0.2, 0.7, 0.1, false}, SINE, 2.0, 1.0, {
+                    Operator{Envelope{0.0, 0.2, 0.0, 0.1, false}, SINE, 1.0, 4.0, {}}}}}}},
+    // Voice Aahs
+    {52, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SINE, 0.2, 1.0, {
+                    Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SINE, 1.0, 5.0, {}}}}}}},
+    // Saw Lead
+    {81, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SAW, 1.0, 0.2, {}}}}},
     };
 
   FILE *fp = fopen(argv[1], "rb");
