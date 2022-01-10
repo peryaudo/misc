@@ -470,6 +470,9 @@ int main(int argc, char *argv[]) {
   }
 
   std::map<int, Program> programs = {
+    // Percussion
+    {-1, Program{{Operator{Envelope{0.00, 0.01, 0.0, 0.0, false}, SAW, -100.0, 1.0, {
+                    Operator{Envelope{0.00, 0.0, 1.0, 0.0, false}, SAW, -200.0, 10.0, {}}}}}}},
     // Electric Piano
     {5, Program{{Operator{Envelope{0.0, 2.0, 0.0, 0.1, false}, SINE, 1.0, 0.8, {
                     Operator{Envelope{0.0, 2.0, 0.0, 0.1, false}, SINE, 14.0, 0.2, {}}}}}}},
@@ -477,7 +480,7 @@ int main(int argc, char *argv[]) {
     {36, Program{{Operator{Envelope{0.0, 0.2, 0.7, 0.1, false}, SINE, 2.0, 1.0, {
                     Operator{Envelope{0.0, 0.2, 0.0, 0.1, false}, SINE, 1.0, 4.0, {}}}}}}},
     // Voice Aahs
-    {52, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SINE, 0.2, 1.0, {
+    {52, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SINE, 1.0, 0.2, {
                     Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SINE, 1.0, 5.0, {}}}}}}},
     // Saw Lead
     {81, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SAW, 1.0, 0.2, {}}}}},
@@ -540,6 +543,9 @@ int main(int argc, char *argv[]) {
         } else if (it->event_type() == PROGRAM_CHANGE) {
           auto pit = programs.find(it->program());
           if (pit != programs.end()) {
+            channels.emplace(it->channel(), pit->second);
+          } else if (it->channel() == 9) {
+            pit = programs.find(-1);
             channels.emplace(it->channel(), pit->second);
           } else {
             printf("program %d not found; channel %d will be muted \n", it->program(), it->channel());
