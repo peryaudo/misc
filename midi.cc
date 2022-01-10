@@ -320,19 +320,39 @@ struct Envelope {
   }
 };
 
+enum WaveFunc {
+  SINE,
+  SAW,
+};
+
+double saw(double rad) {
+  const double x = fmod(rad, 2 * pi) / (2 * pi);
+  return 2.0 * x - 1.0;
+}
+
+double GenerateSignal(WaveFunc func, double rad) {
+  switch (func) {
+    case SINE: return sin(rad);
+    case SAW:  return saw(rad);
+  }
+}
+
 struct Operator {
-  Envelope envelope;
+  const Envelope envelope;
+  const WaveFunc func;
   // If negative it's a fixed frequency.
-  double freq = 1.0;
-  double level = 1.0;
+  const double freq;
+  const double level;
 
   std::vector<Operator> modulators;
 
   Operator(const Envelope& envelope,
+           WaveFunc func,
            double freq,
            double level,
            const std::vector<Operator>& modulators)
       : envelope(envelope)
+      , func(func)
       , freq(freq)
       , level(level)
       , modulators(modulators) {
@@ -354,7 +374,7 @@ struct Operator {
     }
 
     const double carrier = (freq < 0.0 ? freq : MidiFreq(note.note)) * 2.0 * pi;
-    return level * envelope.Get(note, state, t) * sin(carrier * t + modl);
+    return level * envelope.Get(note, state, t) * GenerateSignal(func, carrier * t + modl);
   }
 };
 
@@ -450,7 +470,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::map<int, Program> programs = {
-    {81, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, 1.0, 1.0, {}}}}},
+    {81, Program{{Operator{Envelope{0.0, 0.0, 1.0, 0.0, false}, SAW, 1.0, 1.0, {}}}}},
     };
 
   FILE *fp = fopen(argv[1], "rb");
