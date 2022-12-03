@@ -76,7 +76,7 @@ public:
         }
     }
 
-    uint32_t GetSymbol(BitReader& reader) {
+    uint32_t Read(BitReader& reader) {
         for (int i = 1; i <= 16; ++i) {
             uint32_t code = reader.GetReverse(i);
             if (codes_.count(std::make_pair(i, code))) {
@@ -141,7 +141,14 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < nclen; ++i) {
             metaCodeLengths[kMetaCodeOrder[i]] = reader.Read(3);
         }
+        printf("Huffman meta code: \n");
+        for (int i = 0; i < metaCodeLengths.size(); ++i)
+            printf("[%d] = %d\n", i, metaCodeLengths[i]);
         Huffman metaCode(metaCodeLengths);
+        for (int i = 0; i < nlit + ndist; ++i) {
+            uint32_t symbol = metaCode.Read(reader);
+            printf("%d\n", symbol);
+        }
     }
     return 0;
 }
