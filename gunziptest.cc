@@ -8,10 +8,20 @@
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <string>
 #include <vector>
 
 const int kNumMetaCode = 19;
 uint32_t kMetaCodeOrder[kNumMetaCode] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+
+std::string GetDebugBitString(uint32_t bits, uint32_t length) {
+    std::string result;
+    for (uint32_t i = 0; i < length; ++i) {
+        result += (bits & 1 ? "1" : "0");
+        bits >>= 1;
+    }
+    return result;
+}
 
 class BitReader {
 public:
@@ -56,29 +66,39 @@ public:
         // <length, count>
         std::map<int, int> counts;
         for (int length : lengths) {
-            ++counts[length];
+            if (length > 0)
+                ++counts[length];
         }
         uint32_t code = 0;
         // <length, code>
         std::map<int, uint32_t> next_codes;
-        for (const auto& pa : counts) {
-            const int length = pa.first;
-            const int count = pa.second;
-            next_codes[length] = code;
-            code += count;
+        const int min_length = counts.begin()->first;
+        const int max_length = counts.rbegin()->first;
+        printf("min_length = %d max_length = %d\n", min_length, max_length);
+        for (int i = min_length; i <= max_length; ++i) {
+            next_codes[i] = code;
+            if (counts.count(i))
+                code += counts[i];
             code <<= 1;
         }
         for (int i = 0; i < lengths.size(); ++i) {
             int length = lengths[i];
             uint32_t code = next_codes[length];
-            codes_[std::make_pair(length, code)] = i;
-            ++next_codes[length];
+            if (length > 0) {
+                codes_[std::make_pair(length, code)] = i;
+                ++next_codes[length];
+            }
+        }
+
+        for (const auto& pa : codes_) {
+            printf("length = %d code = %s (%d) symbol = %d\n", pa.first.first, GetDebugBitString(pa.first.second, pa.first.first).c_str(), pa.first.second, pa.second);
         }
     }
 
     uint32_t Read(BitReader& reader) {
         for (int i = 1; i <= 16; ++i) {
             uint32_t code = reader.GetReverse(i);
+            printf("GetReverse(%d) = %d\n", i, code);
             if (codes_.count(std::make_pair(i, code))) {
                 reader.Read(i);
                 return codes_[std::make_pair(i, code)];
@@ -91,9 +111,19 @@ public:
     std::map<std::pair<int, uint32_t>, uint32_t> codes_;
 };
 
+void UnitTest() {
+    // Example from RFC 1951 section 3.2.2
+    // Huffman huffman({2, 1, 3, 3});
+
+    // Second example from RFC 1951 section 3.2.2
+    Huffman huffman2({3, 3, 3, 3, 3, 2, 4, 4});
+    
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s <gzip file name>\n", argv[0]);
+        UnitTest();
         return 1;
     }
 
@@ -138,12 +168,11 @@ int main(int argc, char* argv[]) {
         uint32_t nclen = reader.Read(4) + 4;
         printf("nlit = %d ndist = %d nclen = %d\n", nlit, ndist, nclen);
         std::vector<int> metaCodeLengths(kNumMetaCode, 0);
+        printf("Huffman meta code: \n");
         for (int i = 0; i < nclen; ++i) {
             metaCodeLengths[kMetaCodeOrder[i]] = reader.Read(3);
+            printf("[%d] = %d\n", kMetaCodeOrder[i], metaCodeLengths[kMetaCodeOrder[i]]);
         }
-        printf("Huffman meta code: \n");
-        for (int i = 0; i < metaCodeLengths.size(); ++i)
-            printf("[%d] = %d\n", i, metaCodeLengths[i]);
         Huffman metaCode(metaCodeLengths);
         for (int i = 0; i < nlit + ndist; ++i) {
             uint32_t symbol = metaCode.Read(reader);
