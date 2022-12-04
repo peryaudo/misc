@@ -23,6 +23,8 @@ std::string GetDebugBitString(uint32_t bits, uint32_t length) {
     return result;
 }
 
+uint8_t output[1024 * 1024] = {};
+
 class BitReader {
 public:
     BitReader(uint8_t* data) : data_(data) {}
@@ -210,11 +212,14 @@ int main(int argc, char* argv[]) {
         Huffman literalCode(std::vector<int>(codeLengths.begin(), codeLengths.begin() + nlit));
         Huffman distCode(std::vector<int>(codeLengths.begin() + nlit, codeLengths.end()));
 
-        while (true) {
+        uint8_t* p = output;
+
+        while (p < output + sizeof(output)) {
             uint32_t symbol = literalCode.Read(reader);
             uint32_t length = 0;
             if (symbol < 256) {
-                printf("%c", symbol);
+                *p = (uint8_t)symbol;
+                ++p;
                 continue;
             }
             if (symbol == 256) {
@@ -263,7 +268,14 @@ int main(int argc, char* argv[]) {
                 distance += reader.Read(extra_bits);
                 distance += (1 << (extra_bits + 1)) + 1;
             }
-            printf("\nmatch %d %d\n", length, distance);
+            for (int i = 0; i < length; ++i) {
+                *p = *(p - distance);
+                ++p;
+            }
+        }
+
+        for (int i = 0; i < sizeof(output); ++i) {
+            printf("%c", output[i]);
         }
     }
     return 0;
