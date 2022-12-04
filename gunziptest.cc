@@ -98,7 +98,6 @@ public:
     uint32_t Read(BitReader& reader) {
         for (int i = 1; i <= 16; ++i) {
             uint32_t code = reader.GetReverse(i);
-            printf("GetReverse(%d) = %d\n", i, code);
             if (codes_.count(std::make_pair(i, code))) {
                 reader.Read(i);
                 return codes_[std::make_pair(i, code)];
@@ -174,18 +173,31 @@ int main(int argc, char* argv[]) {
             printf("[%d] = %d\n", kMetaCodeOrder[i], metaCodeLengths[kMetaCodeOrder[i]]);
         }
         Huffman metaCode(metaCodeLengths);
-        for (int i = 0; i < nlit + ndist; ++i) {
+        std::vector<int> codeLengths;
+        while (codeLengths.size() < nlit + ndist) {
             uint32_t symbol = metaCode.Read(reader);
-            printf("%d\n", symbol);
-            if (symbol == 16) {
-                uint32_t rep = reader.Read(2);
-                printf("repeat length = %d\n", rep);
+            if (symbol < 16) {
+                codeLengths.push_back(symbol);
+                printf("lens %d\n", symbol);
+            } else if (symbol == 16) {
+                uint32_t rep = reader.Read(2) + 3;
+                assert(!codeLengths.empty());
+                printf("repeat %d\n", rep);
+                for (int i = 0; i < rep; ++i) {
+                    codeLengths.push_back(codeLengths.back());
+                }
             } else if (symbol == 17) {
-                uint32_t rep = reader.Read(3);
-                printf("zero length = %d\n", rep);
+                uint32_t rep = reader.Read(3) + 3;
+                printf("zeros %d\n", rep);
+                for (int i = 0; i < rep; ++i) {
+                    codeLengths.push_back(0);
+                }
             } else if (symbol == 18) {
-                uint32_t rep = reader.Read(7);
-                printf("zero length = %d\n", rep);
+                uint32_t rep = reader.Read(7) + 11;
+                printf("zeros %d\n", rep);
+                for (int i = 0; i < rep; ++i) {
+                    codeLengths.push_back(0);
+                }
             }
         }
     }
