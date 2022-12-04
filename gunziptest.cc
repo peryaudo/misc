@@ -177,6 +177,16 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < nlit + ndist; ++i) {
             uint32_t symbol = metaCode.Read(reader);
             printf("%d\n", symbol);
+            if (symbol == 16) {
+                uint32_t rep = reader.Read(2);
+                printf("repeat length = %d\n", rep);
+            } else if (symbol == 17) {
+                uint32_t rep = reader.Read(3);
+                printf("zero length = %d\n", rep);
+            } else if (symbol == 18) {
+                uint32_t rep = reader.Read(7);
+                printf("zero length = %d\n", rep);
+            }
         }
     }
     return 0;
