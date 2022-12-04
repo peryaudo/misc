@@ -83,8 +83,9 @@ public:
         }
         for (int i = 0; i < lengths.size(); ++i) {
             int length = lengths[i];
-            uint32_t code = next_codes[length];
             if (length > 0) {
+                uint32_t code = next_codes[length];
+                assert((code & ((1 << length) - 1)) == code);
                 codes_[std::make_pair(length, code)] = i;
                 ++next_codes[length];
             }
@@ -98,6 +99,7 @@ public:
     uint32_t Read(BitReader& reader) {
         for (int i = 1; i <= 16; ++i) {
             uint32_t code = reader.GetReverse(i);
+            // printf("GetReverse(%d) = %d (%s)\n", i, code, GetDebugBitString(code, i).c_str());
             if (codes_.count(std::make_pair(i, code))) {
                 reader.Read(i);
                 return codes_[std::make_pair(i, code)];
@@ -199,6 +201,69 @@ int main(int argc, char* argv[]) {
                     codeLengths.push_back(0);
                 }
             }
+        }
+
+        for (int i = 0; i < nlit; ++i) {
+            if (codeLengths[i] > 0)
+                printf("! litlen %d %d\n", i, codeLengths[i]);
+        }
+        Huffman literalCode(std::vector<int>(codeLengths.begin(), codeLengths.begin() + nlit));
+        Huffman distCode(std::vector<int>(codeLengths.begin() + nlit, codeLengths.end()));
+
+        while (true) {
+            uint32_t symbol = literalCode.Read(reader);
+            uint32_t length = 0;
+            if (symbol < 256) {
+                printf("%c", symbol);
+                continue;
+            }
+            if (symbol == 256) {
+                break;
+            }
+            if (symbol < 265) {
+                length = symbol - 257;
+                length += 3;
+            } else if (symbol < 269) {
+                length = symbol - 265;
+                length <<= 1;
+                length += reader.Read(1);
+                length += 11;
+            } else if (symbol < 273) {
+                length = symbol - 269;
+                length <<= 2;
+                length += reader.Read(2);
+                length += 19;
+            } else if (symbol < 277) {
+                length = symbol - 273;
+                length <<= 3;
+                length += reader.Read(3);
+                length += 35;
+            } else if (symbol < 281) {
+                length = symbol - 277;
+                length <<= 4;
+                length += reader.Read(4);
+                length += 67;
+            } else if (symbol < 285) {
+                length = symbol - 281;
+                length <<= 5;
+                length += reader.Read(5);
+                length += 131;
+            } else if (symbol == 285) {
+                length = 258;
+            } else {
+                assert(false && "invalid symbol");
+            }
+            symbol = distCode.Read(reader);
+            uint32_t distance = 0;
+            if (symbol < 4) {
+                distance = symbol + 1;
+            } else {
+                uint32_t extra_bits = (symbol - 2) >> 1;
+                distance = (symbol & 1) << extra_bits;
+                distance += reader.Read(extra_bits);
+                distance += (1 << (extra_bits + 1)) + 1;
+            }
+            printf("\nmatch %d %d\n", length, distance);
         }
     }
     return 0;
